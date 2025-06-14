@@ -4,8 +4,11 @@
 #include <unistd.h>
 #include <elf.h>
 #include <sys/mman.h>
+#include <errno.h>
+extern int system_call();
+extern int startup();
 
-
+char *title_format = "TYPE    Offset   VirtAdrr   PhysAdrr   Filesiz   Memsiz  FLG Align\n";
 char *format = "%-7s %#08x %#010x %#010x %#09x %#07x %1c%1c%1c %#06x\n";
 
 int checkMagicNumber(unsigned char number[])
@@ -26,7 +29,7 @@ void readelf_L(Elf32_Phdr *phdr, int j)
     char flag[3];
     if (j == 0)
     {
-        printf("TYPE    Offset   VirtAdrr   PhysAdrr   Filesiz   Memsiz  FLG Align\n");
+        printf("%s", title_format);
     }
     switch (phdr->p_type)
     {
@@ -88,17 +91,54 @@ void readelf_L(Elf32_Phdr *phdr, int j)
         {
             printf("PROT_WRITE ");
             if (flag[2] == 'E')
-                
-            printf("| ");
+
+                printf("| ");
         }
         if (flag[2] == 'E')
             printf("PROT_EXEC");
-        if(flag[1]==' '&& flag[2]==' '&& flag[3]==' ')
+        if (flag[1] == ' ' && flag[2] == ' ' && flag[3] == ' ')
         {
             printf("PROT_NONE");
         }
         printf("\n");
         printf("mapping flags: MAP_PRIVATE | MAP_FIXED\n");
+    }
+}
+
+void load_phdr(Elf32_Phdr *phdr, int fd)
+{
+
+    if (phdr->p_type == PT_LOAD)
+    {
+        unsigned int vaddr = phdr->p_vaddr & 0xfffff000;
+        unsigned int offset = phdr->p_offset & 0xfffff000;
+        unsigned int padding = phdr->p_vaddr & 0xfff;
+
+        int flags = 0;
+        if (phdr->p_flags & 0x1)
+            flags |= PROT_EXEC;
+        if (phdr->p_flags & 0x2)
+            flags |= PROT_WRITE;
+        if (phdr->p_flags & 0x4)
+            flags |= PROT_READ;
+
+        printf("%s", title_format);
+        readelf_L(phdr, 1);
+
+        printf("vaddr      offset     padding    flg fd\n");
+        printf("%#010x %#010x %#010x %1d%1d%1d %d\n", vaddr, offset, padding, flags / 0b100, (flags % 0b100) / 0b10, flags % 0b10, fd);
+
+        void *map = mmap((void *)vaddr, phdr->p_memsz + padding, flags, MAP_PRIVATE | MAP_FIXED , fd, offset);
+
+        if (errno != 0)
+        {
+            perror("ERROR mapping memory");
+            //printf("ERRcode %d\n", errno);
+        }
+        else
+        {
+            printf("Mapped memoty successfully!\n");
+        }
     }
 }
 
@@ -112,7 +152,7 @@ int foreach_phdr(void *map_start, void (*func)(Elf32_Phdr *, int), int arg)
 
         for (int i = 0; i < ehdr->e_phnum; i++)
         {
-            func(&phdr_table[i], i);
+            func(&phdr_table[i], arg);
         }
     }
 }
@@ -128,7 +168,7 @@ int main(int argc, char *argv[])
         printf("Usage : ./my_loader <file_name>\n");
         exit(0);
     }
-    op = open(argv[1], O_RDWR);
+    op = open(argv[1], O_RDWR | O_EXCL);
     if (op < 0) // cannot open file
     {
         fprintf(stderr, "ERROR opening file %s", argv[1]);
@@ -151,7 +191,8 @@ int main(int argc, char *argv[])
 
     void *map = mmap(NULL, size, PROT_READ, MAP_PRIVATE, op, 0);
 
-    foreach_phdr(map, readelf_L, 0);
+    foreach_phdr(map, load_phdr, op);
+    startup(argc,argv,header->e_entry);
 
     close(op);
     free(header);

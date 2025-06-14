@@ -31,7 +31,7 @@ startup:
         push    ecx             ; Push argc for _start
 
         mov     ebx, [ebp+16]   ; Gets the function address from C
-        call    ebx             ; Jumps to  _start
+        jmp    ebx             ; Jumps to  _start
 
         mov     [ebp-4], eax    ; Save return value
         popad                   ; Restore caller state (registers)
